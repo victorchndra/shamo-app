@@ -1,0 +1,126 @@
+<?php
+
+namespace App\Http\Controllers\API;
+
+use Exception;
+use App\Models\User;
+use Illuminate\Http\Request;
+use App\Helpers\ResponseFormatter;
+use App\Http\Controllers\Controller;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Hash;
+
+class UserController extends Controller
+{
+    public function register(Request $request) {
+        try {
+            // validasi inputan seperti biasa
+            $request->validate([
+                'name' => "required|string|max:255",
+                'username' => "required|string|max:255|unique:users",
+                'email' => "required|string|email|max:255|unique:users",
+                'phone' => "nullable|string|max:255",
+                'password' => ['required', 'string'],
+            ]);
+
+            // Insert data
+            User::create([
+                'name' => $request->name,
+                'username' => $request->username,
+                'email' => $request->email,
+                'phone' => $request->phone,
+                'password' => Hash::make($request->password), //bisa pakai bcrypt juga
+            ]);
+
+            // Langsung diarahkan ke arah login sesuai inputan email
+            // Simpan data user ke variabel sesuai email dari inputan
+            $user = User::where('email', $request->email)->first();
+
+            $tokenResult = $user->createToken('authToken')->plainTextToken;
+
+            return ResponseFormatter::success([
+                'access_token' => $tokenResult,
+                'token_type' => 'Bearer',
+                'user' => $user,
+            ], 'User Registered');
+        } catch (Exception $error) {
+            return ResponseFormatter::error([
+                'message' => 'Something went wrong',
+                'error' => $error
+            ], 'Authentication Failed', 500);
+        };
+    }
+
+    public function login(Request $request) {
+        try {
+            // Validasi inputan email dan password
+            $request->validate([
+                'email' => "required|email",
+                'password' => "required",
+            ]);
+
+            // Menyimpan data email dan password ke dalam variabel
+            $credentials = request(['email', 'password']);
+
+            // Jika auth tidak menemukan credentials, akan memunculkan pesan error
+            // Jika memenuhi syarat maka baris if akan di skip
+            if(!Auth::attempt($credentials)) {
+                return ResponseFormatter::error([
+                    'message' => 'Unauthorized'
+                ], 'Authentication Failed', 500);
+            }
+
+            // Menyimpan data user sesuai input email ke dalam variabel
+            $user = User::where('email', $request->email)->first();
+
+            // Cek password apakah sesuai dengan data user yang diambil berdasarkan email
+            if (!Hash::check($request->password, $user->password)) {
+                throw new \Exception("Invalid Credentials");
+            }
+
+            // Core login : Jika ada token, berarti akun berhasil dapat diakses, input yang diakses mengambil detail data user dari database
+            $tokenResult = $user->createToken('authToken')->plainTextToken;
+
+            return ResponseFormatter::success([
+                'access_token' => $tokenResult,
+                'token_type' => 'Bearer',
+                'user' => $user,
+            ], 'Authenticated');
+        } catch (Exception $error) {
+            return ResponseFormatter::error([
+                'message' => 'Something went wrong',
+                'error' => $error
+            ], 'Authentication Failed', 500);
+        }
+    }
+
+    public function fetch(Request $request) {
+        // $request->user() = detail data user, diambil otomatis jika kita login
+        return ResponseFormatter::success(
+            $request->user(),
+            "Data profil user berhasil diambil"
+        );
+    }
+
+    public function updateProfile(Request $request) {
+        $data = $request->validate([
+            'name' => "required|string|max:255",
+            'username' => "required|string|max:255|unique:users",
+            'email' => "required|string|email|max:255|unique:users",
+            'phone' => "nullable|string|max:255",
+        ]);
+
+        $user = Auth::user();
+        $user->update($data);
+
+        return ResponseFormatter::success($user, 'Profile updated');
+    }
+
+    public function logout(Request $request) {
+        // Untuk logout cukup hapus token yang sedang di akses
+        // [Karena core login : token]
+        $token = $request->user()->currentAccessToken()->delete();
+
+        return ResponseFormatter::success($token, "Token revoked");
+    }
+}
